@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Parkplatzreservation</title>
+  <style>
+    :root { font-family: Arial, Helvetica, sans-serif; color: #172033; background: #eef4f8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 32px 16px; }
+    .app { max-width: 900px; margin: 0 auto; display: grid; gap: 18px; }
+    .card { background: white; border-radius: 18px; padding: 24px; box-shadow: 0 10px 30px rgba(0,0,0,.08); }
+    h1, h2, h3 { margin-top: 0; }
+    .hint { color: #5d6878; line-height: 1.45; }
+    form { display: grid; gap: 16px; margin-top: 20px; }
+    label { display: grid; gap: 7px; font-weight: 700; }
+    select, input { padding: 12px; border: 1px solid #ccd6e0; border-radius: 10px; font-size: 16px; }
+    button { padding: 12px 16px; border: 0; border-radius: 10px; background: #087f8c; color: white; font-weight: 700; cursor: pointer; font-size: 16px; }
+    button:hover { filter: brightness(.95); }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .title-row, .week-header { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .week-nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .nav-button { background: #f1f5f9; color: #172033; padding: 9px 12px; font-size: 14px; }
+    #weekRange, #syncStatus { color: #5d6878; font-weight: 700; }
+    #message { margin-bottom: 0; font-weight: 700; }
+    .ok { color: #087f3e; }
+    .error { color: #b42318; }
+    .setup-warning { border: 1px solid #f5c2c7; background: #fff1f2; color: #991b1b; padding: 12px; border-radius: 12px; font-weight: 700; }
+    .week-overview { margin-top: 12px; overflow-x: auto; }
+    .week-table { width: 100%; border-collapse: separate; border-spacing: 0 9px; }
+    .week-table th { text-align: left; color: #5d6878; font-size: 14px; padding: 0 12px 4px; }
+    .week-table td { background: #f8fafc; padding: 14px 12px; border-top: 1px solid #e6edf5; border-bottom: 1px solid #e6edf5; }
+    .week-table td:first-child { border-left: 1px solid #e6edf5; border-radius: 12px 0 0 12px; font-weight: 700; }
+    .week-table td:last-child { border-right: 1px solid #e6edf5; border-radius: 0 12px 12px 0; }
+    .today td { background: #eaf4ff; border-color: #bfdbfe; }
+    .past-day td { background: #f1f3f5; color: #8a94a3; border-color: #e1e6eb; }
+    .past-day .badge { opacity: .65; }
+    .badge { display: inline-flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 999px; font-weight: 700; }
+    .badge-free { background: #e8f7ee; color: #087f3e; }
+    .badge-flavio { background: #ffeaea; color: #b42318; }
+    .badge-elina { background: #fff0db; color: #a15c00; }
+    .badge-emily { background: #e8f0ff; color: #1d4ed8; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background: currentColor; }
+    .delete { background: #f1f5f9; color: #172033; padding: 8px 12px; font-size: 14px; margin-left: 8px; }
+    @media (max-width: 560px) {
+      body { padding: 16px 10px; }
+      .card { padding: 18px; }
+      .week-table th, .week-table td { padding-left: 10px; padding-right: 10px; }
+      .delete { display: block; margin-left: 0; margin-top: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="card">
+      <h1>Parkplatzreservation</h1>
+      <p class="hint">Wenn möglich, bitte den Parkplatz bis 15:00 Uhr am Vortag reservieren. Ist der Parkplatz danach noch frei, kann er jedoch weiterhin gebucht werden.</p>
+      <div id="setupWarning" class="setup-warning" hidden>Firebase ist noch nicht verbunden. Bitte die Datei firebase-config.js ausfüllen.</div>
+      <form id="bookingForm">
+        <label>Name<select id="name" required><option value="">Bitte auswählen</option><option>Flavio</option><option>Elina</option><option>Emily</option></select></label>
+        <label>Datum<input id="date" type="date" required /></label>
+        <button id="submitButton" type="submit">Parkplatz reservieren</button>
+      </form>
+      <p id="message"></p>
+    </section>
+    <section class="card" id="reservationCard">
+      <div class="title-row"><h2>Aktuelle Reservationen</h2><span id="syncStatus">Verbinde...</span></div>
+      <div class="week-header">
+        <div><h3 id="weekTitle">Wochenübersicht</h3><div id="weekRange"></div></div>
+        <div class="week-nav">
+          <button class="nav-button" type="button" id="prevWeek">‹ Vorherige Woche</button>
+          <button class="nav-button" type="button" id="currentWeek">Diese Woche</button>
+          <button class="nav-button" type="button" id="nextWeek">Nächste Woche ›</button>
+        </div>
+      </div>
+      <div class="week-overview"><table class="week-table"><thead><tr><th>Tag</th><th>Datum</th><th>Status</th></tr></thead><tbody id="weekOverview"></tbody></table></div>
+    </section>
+  </main>
+  <script src="firebase-config.js"></script>
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js';
+    import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, getDoc, getDocs, query, where, writeBatch } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js';
+
+    const form = document.getElementById('bookingForm');
+    const nameInput = document.getElementById('name');
+    const dateInput = document.getElementById('date');
+    const message = document.getElementById('message');
+    const weekOverview = document.getElementById('weekOverview');
+    const reservationCard = document.getElementById('reservationCard');
+    const prevWeekButton = document.getElementById('prevWeek');
+    const currentWeekButton = document.getElementById('currentWeek');
+    const nextWeekButton = document.getElementById('nextWeek');
+    const weekRange = document.getElementById('weekRange');
+    const syncStatus = document.getElementById('syncStatus');
+    const setupWarning = document.getElementById('setupWarning');
+    const submitButton = document.getElementById('submitButton');
+    let weekOffset = 0;
+    let bookings = [];
+    let db = null;
+    const weekdays = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+
+    function firebaseReady() { return window.firebaseConfig && window.firebaseConfig.apiKey && !window.firebaseConfig.apiKey.includes('HIER'); }
+    if (!firebaseReady()) { setupWarning.hidden = false; syncStatus.textContent = 'Nicht verbunden'; submitButton.disabled = true; }
+    else {
+      const app = initializeApp(window.firebaseConfig);
+      db = getFirestore(app);
+      onSnapshot(collection(db, 'reservations'), async (snapshot) => {
+        bookings = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        await removePastBookings();
+        bookings.sort((a, b) => a.date.localeCompare(b.date));
+        renderWeekOverview(bookings);
+        syncStatus.textContent = 'Synchronisiert';
+      }, () => { syncStatus.textContent = 'Fehler beim Laden'; setMessage('Die Reservationen konnten nicht geladen werden.', 'error'); });
+    }
+
+    function toDateString(date) { return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`; }
+    function formatDate(dateString) { const [y,m,d] = dateString.split('-'); return `${d}.${m}.${y}`; }
+    function getMonday(date) { const monday = new Date(date); monday.setHours(0,0,0,0); const day = monday.getDay(); monday.setDate(monday.getDate() + (day === 0 ? -6 : 1 - day)); return monday; }
+    function formatDayWithDate(date) { return `${weekdays[date.getDay()]}, ${String(date.getDate()).padStart(2,'0')}.${String(date.getMonth()+1).padStart(2,'0')}.`; }
+    function isPastDate(dateString) { const today = new Date(); today.setHours(0,0,0,0); return new Date(dateString + 'T00:00:00') < today; }
+    function isAfterNormalDeadline(dateString) { const now = new Date(); const deadline = new Date(dateString + 'T00:00:00'); deadline.setDate(deadline.getDate() - 1); deadline.setHours(15,0,0,0); return now > deadline; }
+    function setMessage(text, type) { message.textContent = text; message.className = type; }
+    function badgeClass(name) { if (name === 'Flavio') return 'badge-flavio'; if (name === 'Elina') return 'badge-elina'; if (name === 'Emily') return 'badge-emily'; return 'badge-free'; }
+
+    async function removePastBookings() {
+      if (!db) return;
+      const todayString = toDateString(new Date());
+      const oldSnapshot = await getDocs(query(collection(db, 'reservations'), where('date', '<', todayString)));
+      if (oldSnapshot.empty) return;
+      const batch = writeBatch(db);
+      oldSnapshot.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
+
+    function renderWeekOverview(items) {
+      weekOverview.innerHTML = '';
+      const today = new Date(); today.setHours(0,0,0,0);
+      const start = getMonday(today); start.setDate(start.getDate() + weekOffset * 7);
+      const end = new Date(start); end.setDate(start.getDate() + 6);
+      weekRange.textContent = `${formatDate(toDateString(start))} bis ${formatDate(toDateString(end))}`;
+      for (let i = 0; i < 7; i++) {
+        const date = new Date(start); date.setDate(start.getDate() + i);
+        const dateString = toDateString(date);
+        const booking = items.find(item => item.date === dateString);
+        const row = document.createElement('tr');
+        if (date < today) row.classList.add('past-day');
+        if (dateString === toDateString(today)) row.classList.add('today');
+        row.innerHTML = `<td>${formatDayWithDate(date)}</td><td>${formatDate(dateString)}</td><td><span class="badge ${booking ? badgeClass(booking.name) : 'badge-free'}"><span class="dot"></span>${booking ? booking.name : 'Frei'}</span>${booking ? ` <button class="delete" type="button" data-date="${booking.date}">Löschen</button>` : ''}</td>`;
+        weekOverview.appendChild(row);
+      }
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!db) return;
+      const name = nameInput.value;
+      const date = dateInput.value;
+      if (!name || !date) return setMessage('Bitte Name und Datum auswählen.', 'error');
+      if (isPastDate(date)) return setMessage('Dieses Datum ist bereits vorbei.', 'error');
+      submitButton.disabled = true;
+      try {
+        const ref = doc(db, 'reservations', date);
+        const existing = await getDoc(ref);
+        if (existing.exists()) {
+          setMessage(`Der Parkplatz ist am ${formatDate(date)} bereits von ${existing.data().name} gebucht.`, 'error');
+        } else {
+          const lateBooking = isAfterNormalDeadline(date);
+          await setDoc(ref, { name, date, createdAt: new Date().toISOString(), lateBooking });
+          setMessage(lateBooking ? `Reservation gespeichert: ${name} hat den freien Parkplatz am ${formatDate(date)} nachträglich gebucht.` : `Reservation gespeichert: ${name} hat den Parkplatz am ${formatDate(date)} gebucht.`, 'ok');
+          form.reset();
+          reservationCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      } catch (error) { setMessage('Die Reservation konnte nicht gespeichert werden.', 'error'); }
+      submitButton.disabled = false;
+    });
+
+    prevWeekButton.addEventListener('click', () => { weekOffset -= 1; renderWeekOverview(bookings); });
+    currentWeekButton.addEventListener('click', () => { weekOffset = 0; renderWeekOverview(bookings); });
+    nextWeekButton.addEventListener('click', () => { weekOffset += 1; renderWeekOverview(bookings); });
+    weekOverview.addEventListener('click', async (event) => {
+      if (!event.target.classList.contains('delete') || !db) return;
+      await deleteDoc(doc(db, 'reservations', event.target.dataset.date));
+      setMessage('Reservation gelöscht.', 'ok');
+    });
+    renderWeekOverview(bookings);
+  </script>
+</body>
+</html>
